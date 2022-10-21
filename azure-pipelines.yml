@@ -11,15 +11,13 @@ pr:
   drafts: false
   branches:
     include:
-      - develop
+      - vNext
 
 trigger:
   batch: true
   branches:
     include:
-      - develop
-      - develop/*
-      - feature/*
+      - vNext
 
 pool:
   vmImage: 'windows-2022'
