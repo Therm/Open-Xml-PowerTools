@@ -63,6 +63,12 @@ namespace OpenXmlPowerTools
                 false, null, true);
         }
 
+        public static int Replace(IEnumerable<XElement> content, Regex regex, MatchEvaluator evaluator)
+        {
+            return ReplaceInternal(content, regex, null, null, false, null, true, evaluator);
+        }
+
+
         /// <summary>
         /// If replacement == "new content" && callback == null
         ///     Then replaces all matches
@@ -112,7 +118,7 @@ namespace OpenXmlPowerTools
 
         private static int ReplaceInternal(IEnumerable<XElement> content, Regex regex, string replacement,
             Func<XElement, Match, bool> callback, bool trackRevisions, string revisionTrackingAuthor,
-            bool coalesceContent)
+            bool coalesceContent, MatchEvaluator evaluator = null)
         {
             if (content == null) throw new ArgumentNullException("content");
             if (regex == null) throw new ArgumentNullException("regex");
@@ -132,7 +138,7 @@ namespace OpenXmlPowerTools
                 foreach (XElement c in contentList)
                 {
                     var newC = (XElement) WmlSearchAndReplaceTransform(c, regex, replacement, callback, trackRevisions,
-                        revisionTrackingAuthor, replInfo, coalesceContent);
+                        revisionTrackingAuthor, replInfo, coalesceContent, evaluator);
                     c.ReplaceNodes(newC.Nodes());
                 }
 
@@ -187,7 +193,7 @@ namespace OpenXmlPowerTools
 
         private static object WmlSearchAndReplaceTransform(XNode node, Regex regex, string replacement,
             Func<XElement, Match, bool> callback, bool trackRevisions, string revisionTrackingAuthor,
-            ReplaceInternalInfo replInfo, bool coalesceContent)
+            ReplaceInternalInfo replInfo, bool coalesceContent, MatchEvaluator evaluator)
         {
             var element = node as XElement;
             if (element == null) return node;
@@ -206,7 +212,7 @@ namespace OpenXmlPowerTools
                     var paragraphWithSplitRuns = new XElement(W.p,
                         paragraph.Attributes(),
                         paragraph.Nodes().Select(n => WmlSearchAndReplaceTransform(n, regex, replacement, callback,
-                            trackRevisions, revisionTrackingAuthor, replInfo, coalesceContent)));
+                            trackRevisions, revisionTrackingAuthor, replInfo, coalesceContent, evaluator)));
 
                     IEnumerable<XElement> runsTrimmed = paragraphWithSplitRuns
                         .DescendantsTrimmed(W.txbxContent)
@@ -223,7 +229,7 @@ namespace OpenXmlPowerTools
                     replInfo.Count += matchCollection.Count;
 
                     // Process Match
-                    if (replacement == null)
+                    if (replacement == null && evaluator == null)
                     {
                         if (callback == null) return paragraph;
 
@@ -253,12 +259,12 @@ namespace OpenXmlPowerTools
 
                         if (trackRevisions)
                         {
-                            if (replacement != "")
+                            if (replacement != "" || evaluator != null)
                             {
                                 // We coalesce runs as some methods, e.g., in DocumentAssembler,
                                 // will try to find the replacement string even though they
                                 // set coalesceContent to false.
-                                string newTextValue = match.Result(replacement);
+                                string newTextValue = evaluator != null ? evaluator(match) : match.Result(replacement);
                                 List<XElement> newRuns = UnicodeMapper.StringToCoalescedRunList(newTextValue,
                                     firstRunProperties);
                                 var newIns = new XElement(W.ins,
@@ -328,7 +334,7 @@ namespace OpenXmlPowerTools
                             // We coalesce runs as some methods, e.g., in DocumentAssembler,
                             // will try to find the replacement string even though they
                             // set coalesceContent to false.
-                            string newTextValue = match.Result(replacement);
+                            string newTextValue = evaluator != null ? evaluator(match) : match.Result(replacement);
                             List<XElement> newRuns = UnicodeMapper.StringToCoalescedRunList(newTextValue,
                                 firstRunProperties);
                             if (firstRun.Parent != null && firstRun.Parent.Name == W.ins)
@@ -358,7 +364,7 @@ namespace OpenXmlPowerTools
                             return e;
 
                         return WmlSearchAndReplaceTransform(e, regex, replacement, callback,
-                            trackRevisions, revisionTrackingAuthor, replInfo, coalesceContent);
+                            trackRevisions, revisionTrackingAuthor, replInfo, coalesceContent, evaluator);
                     }));
                 return coalesceContent
                     ? WordprocessingMLUtil.CoalesceAdjacentRunsWithIdenticalFormatting(newParagraph) // CoalesceContent(newParagraph)
@@ -370,7 +376,7 @@ namespace OpenXmlPowerTools
                 List<object> collectionOfCollections = element
                     .Elements()
                     .Select(n => WmlSearchAndReplaceTransform(n, regex, replacement, callback, trackRevisions,
-                        revisionTrackingAuthor, replInfo, coalesceContent))
+                        revisionTrackingAuthor, replInfo, coalesceContent, evaluator))
                     .ToList();
                 List<object> collectionOfIns = collectionOfCollections
                     .Select(c =>
@@ -401,7 +407,7 @@ namespace OpenXmlPowerTools
                 element.Attributes(),
                 element.Nodes()
                     .Select(n => WmlSearchAndReplaceTransform(n, regex, replacement, callback, trackRevisions,
-                        revisionTrackingAuthor, replInfo, coalesceContent)));
+                        revisionTrackingAuthor, replInfo, coalesceContent, evaluator)));
         }
 
         private static object TransformToDelText(XNode node)
