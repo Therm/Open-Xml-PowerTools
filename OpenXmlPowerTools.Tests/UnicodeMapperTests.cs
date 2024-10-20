@@ -58,6 +58,7 @@ namespace OpenXmlPowerTools.Tests
         [Fact]
         public void CanCreateRunChildElementsFromSpecialCharacters()
         {
+            Assert.Equal(W.br, UnicodeMapper.CharToRunChild(UnicodeMapper.LineFeed).Name);
             Assert.Equal(W.br, UnicodeMapper.CharToRunChild(UnicodeMapper.CarriageReturn).Name);
             Assert.Equal(W.noBreakHyphen, UnicodeMapper.CharToRunChild(UnicodeMapper.NonBreakingHyphen).Name);
             Assert.Equal(W.softHyphen, UnicodeMapper.CharToRunChild(UnicodeMapper.SoftHyphen).Name);

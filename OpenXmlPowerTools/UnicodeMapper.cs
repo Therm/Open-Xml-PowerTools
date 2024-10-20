@@ -315,6 +315,8 @@ namespace OpenXmlPowerTools
             // Translate special characters into their corresponding Open XML elements.
             // Turn a Carriage Return into an empty w:br element, regardless of whether
             // the former was created from an equivalent w:cr element.
+            if (character == LineFeed)
+                return new XElement(W.br);
             if (character == CarriageReturn)
                 return new XElement(W.br);
             if (character == FormFeed)
