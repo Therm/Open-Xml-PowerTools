@@ -264,7 +264,7 @@ namespace OpenXmlPowerTools
                                 // We coalesce runs as some methods, e.g., in DocumentAssembler,
                                 // will try to find the replacement string even though they
                                 // set coalesceContent to false.
-                                string newTextValue = evaluator != null ? evaluator(match) : match.Result(replacement);
+                                string newTextValue = evaluator != null ? evaluator(match) ?? String.Empty : match.Result(replacement);
                                 List<XElement> newRuns = UnicodeMapper.StringToCoalescedRunList(newTextValue,
                                     firstRunProperties);
                                 var newIns = new XElement(W.ins,
@@ -334,7 +334,7 @@ namespace OpenXmlPowerTools
                             // We coalesce runs as some methods, e.g., in DocumentAssembler,
                             // will try to find the replacement string even though they
                             // set coalesceContent to false.
-                            string newTextValue = evaluator != null ? evaluator(match) : match.Result(replacement);
+                            string newTextValue = evaluator != null ? evaluator(match) ?? String.Empty : match.Result(replacement);
                             List<XElement> newRuns = UnicodeMapper.StringToCoalescedRunList(newTextValue,
                                 firstRunProperties);
                             if (firstRun.Parent != null && firstRun.Parent.Name == W.ins)
