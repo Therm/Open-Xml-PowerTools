@@ -1,14 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.Xml;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
 
@@ -55,139 +50,109 @@ namespace OpenXmlPowerTools
             return node;
         }
 
-        private static object WmlSearchAndReplaceTransform2(
-            XNode node,
-            string search,
-            string replace,
-            bool matchCase,
-            bool regex = false,
-            Regex regexProvided = null,
-            RegexOptions? options = null,
-            MatchEvaluator evaluator = null,
-            XElement element = null,
-            String searchResult = null)
-        {
-            XElement paragraphWithSplitRuns = new XElement(W.p,
-                element.Attributes(),
-                element.Nodes().Select(n => WmlSearchAndReplaceTransform(n, search,
-                    replace, matchCase, regex, regexProvided, options, evaluator)));
-            XElement[] subRunArray = paragraphWithSplitRuns
-                .Elements(W.r)
-                .Where(e => {
-                    XElement subRunElement = e.Elements().FirstOrDefault(el => el.Name != W.rPr);
-                    if (subRunElement == null)
-                        return false;
-                    return W.SubRunLevelContent.Contains(subRunElement.Name);
-                })
-                .ToArray();
-            int paragraphChildrenCount = subRunArray.Length;
-            int matchId = 1;
-            foreach (var pc in subRunArray
-                .Take(paragraphChildrenCount - (searchResult.Length - 1))
-                .Select((c, i) => new { Child = c, Index = i, }))
-            {
-                var subSequence = subRunArray.SequenceAt(pc.Index).Take(searchResult.Length);
-                var zipped = subSequence.PtZip(searchResult, (pcp, c) => new
-                {
-                    ParagraphChildProjection = pcp,
-                    CharacterToCompare = c,
-                });
-                bool dontMatch = zipped.Any(z => {
-                    if (z.ParagraphChildProjection.Annotation<MatchSemaphore>() != null)
-                        return true;
-                    bool b;
-                    if (matchCase)
-                        b = z.ParagraphChildProjection.Value != z.CharacterToCompare.ToString();
-                    else
-                        b = z.ParagraphChildProjection.Value.ToUpper() != z.CharacterToCompare.ToString().ToUpper();
-                    return b;
-                });
-                bool match = !dontMatch;
-                if (match)
-                {
-                    foreach (var item in subSequence)
-                        item.AddAnnotation(new MatchSemaphore(matchId));
-                    ++matchId;
-                }
-            }
-
-            // The following code is locally impure, as this is the most expressive way to write it.
-            XElement paragraphWithReplacedRuns = (XElement)CloneWithAnnotation(paragraphWithSplitRuns);
-            for (int id = 1; id < matchId; ++id)
-            {
-                List<XElement> elementsToReplace = paragraphWithReplacedRuns
-                    .Elements()
-                    .Where(e => {
-                        var sem = e.Annotation<MatchSemaphore>();
-                        if (sem == null)
-                            return false;
-                        return sem.MatchId == id;
-                    })
-                    .ToList();
-                elementsToReplace.First().AddBeforeSelf(
-                    new XElement(W.r,
-                        elementsToReplace.First().Elements(W.rPr),
-                        new XElement(W.t, replace)));
-                elementsToReplace.Remove();
-            }
-            var groupedAdjacentRunsWithIdenticalFormatting =
-                paragraphWithReplacedRuns
-                .Elements()
-                .GroupAdjacent(ce =>
-                {
-                    if (ce.Name != W.r)
-                        return "DontConsolidate";
-                    if (ce.Elements().Where(e => e.Name != W.rPr).Count() != 1 ||
-                        ce.Element(W.t) == null)
-                        return "DontConsolidate";
-                    if (ce.Element(W.rPr) == null)
-                        return "";
-                    return ce.Element(W.rPr).ToString(SaveOptions.None);
-                });
-            XElement paragraphWithConsolidatedRuns = new XElement(W.p,
-                groupedAdjacentRunsWithIdenticalFormatting.Select(g =>
-                {
-                    if (g.Key == "DontConsolidate")
-                        return (object)g;
-                    string textValue = g.Select(r => r.Element(W.t).Value).StringConcatenate();
-                    XAttribute xs = null;
-                    if (textValue.Length > 0 && (textValue[0] == ' ' || textValue[textValue.Length - 1] == ' '))
-                        xs = new XAttribute(XNamespace.Xml + "space", "preserve");
-                    return new XElement(W.r,
-                                    g.First().Elements(W.rPr),
-                                    new XElement(W.t, xs, textValue));
-                }));
-            return paragraphWithConsolidatedRuns;
-        }
-
         private static object WmlSearchAndReplaceTransform(XNode node,
-            string search, string replace, bool matchCase, bool regex = false, Regex regexProvided = null, RegexOptions? options = null, MatchEvaluator evaluator = null)
+            string search, string replace, bool matchCase)
         {
-            if (regex && evaluator == null) { throw new ArgumentException($"When specifying the search string as a regular expression, an evaluator must be provided"); }
             XElement element = node as XElement;
             if (element != null)
             {
                 if (element.Name == W.p)
                 {
                     string contents = element.Descendants(W.t).Select(t => (string)t).StringConcatenate();
-                    var searchResult = search;
-
-                    var regexMatches = regex ? regexProvided != null ? regexProvided.Matches(contents) : !options.HasValue ? Regex.Matches(contents, search) : Regex.Matches(contents, search, options.Value) : null;
-                    if (regex && regexMatches != null && regexMatches.Count > 0)
+                    if (contents.Contains(search) ||
+                        (!matchCase && contents.ToUpper().Contains(search.ToUpper())))
                     {
-                        foreach (Match regexMatch in regexMatches)
+                        XElement paragraphWithSplitRuns = new XElement(W.p,
+                            element.Attributes(),
+                            element.Nodes().Select(n => WmlSearchAndReplaceTransform(n, search,
+                                replace, matchCase)));
+                        XElement[] subRunArray = paragraphWithSplitRuns
+                            .Elements(W.r)
+                            .Where(e => {
+                                XElement subRunElement = e.Elements().FirstOrDefault(el => el.Name != W.rPr);
+                                if (subRunElement == null)
+                                    return false;
+                                return W.SubRunLevelContent.Contains(subRunElement.Name);
+                            })
+                            .ToArray();
+                        int paragraphChildrenCount = subRunArray.Length;
+                        int matchId = 1;
+                        foreach (var pc in subRunArray
+                            .Take(paragraphChildrenCount - (search.Length - 1))
+                            .Select((c, i) => new { Child = c, Index = i, }))
                         {
-                            searchResult = regexMatch.Value;
-                            replace = evaluator(regexMatch);
-                            element = (XElement)WmlSearchAndReplaceTransform2(node, search, replace, matchCase, regex, regexProvided, options,
-                                evaluator, element, searchResult);
+                            var subSequence = subRunArray.SequenceAt(pc.Index).Take(search.Length);
+                            var zipped = subSequence.PtZip(search, (pcp, c) => new
+                            {
+                                ParagraphChildProjection = pcp,
+                                CharacterToCompare = c,
+                            });
+                            bool dontMatch = zipped.Any(z => {
+                                if (z.ParagraphChildProjection.Annotation<MatchSemaphore>() != null)
+                                    return true;
+                                bool b;
+                                if (matchCase)
+                                    b = z.ParagraphChildProjection.Value != z.CharacterToCompare.ToString();
+                                else
+                                    b = z.ParagraphChildProjection.Value.ToUpper() != z.CharacterToCompare.ToString().ToUpper();
+                                return b;
+                            });
+                            bool match = !dontMatch;
+                            if (match)
+                            {
+                                foreach (var item in subSequence)
+                                    item.AddAnnotation(new MatchSemaphore(matchId));
+                                ++matchId;
+                            }
                         }
-                    }
 
-                    if (!regex && (contents.Contains(searchResult) || (!matchCase && contents.ToUpper().Contains(searchResult.ToUpper()))))
-                    {
-                        return WmlSearchAndReplaceTransform2(node, search, replace, matchCase, regex, regexProvided, options,
-                            evaluator, element, searchResult);
+                        // The following code is locally impure, as this is the most expressive way to write it.
+                        XElement paragraphWithReplacedRuns = (XElement)CloneWithAnnotation(paragraphWithSplitRuns);
+                        for (int id = 1; id < matchId; ++id)
+                        {
+                            List<XElement> elementsToReplace = paragraphWithReplacedRuns
+                                .Elements()
+                                .Where(e => {
+                                    var sem = e.Annotation<MatchSemaphore>();
+                                    if (sem == null)
+                                        return false;
+                                    return sem.MatchId == id;
+                                })
+                                .ToList();
+                            elementsToReplace.First().AddBeforeSelf(
+                                new XElement(W.r,
+                                    elementsToReplace.First().Elements(W.rPr),
+                                    new XElement(W.t, replace)));
+                            elementsToReplace.Remove();
+                        }
+                        var groupedAdjacentRunsWithIdenticalFormatting =
+                            paragraphWithReplacedRuns
+                            .Elements()
+                            .GroupAdjacent(ce =>
+                            {
+                                if (ce.Name != W.r)
+                                    return "DontConsolidate";
+                                if (ce.Elements().Where(e => e.Name != W.rPr).Count() != 1 ||
+                                    ce.Element(W.t) == null)
+                                    return "DontConsolidate";
+                                if (ce.Element(W.rPr) == null)
+                                    return "";
+                                return ce.Element(W.rPr).ToString(SaveOptions.None);
+                            });
+                        XElement paragraphWithConsolidatedRuns = new XElement(W.p,
+                            groupedAdjacentRunsWithIdenticalFormatting.Select(g =>
+                            {
+                                if (g.Key == "DontConsolidate")
+                                    return (object)g;
+                                string textValue = g.Select(r => r.Element(W.t).Value).StringConcatenate();
+                                XAttribute xs = null;
+                                if (textValue[0] == ' ' || textValue[textValue.Length - 1] == ' ')
+                                    xs = new XAttribute(XNamespace.Xml + "space", "preserve");
+                                return new XElement(W.r,
+                                    g.First().Elements(W.rPr),
+                                    new XElement(W.t, xs, textValue));
+                            }));
+                        return paragraphWithConsolidatedRuns;
                     }
                     return element;
                 }
@@ -225,16 +190,16 @@ namespace OpenXmlPowerTools
                 return new XElement(element.Name,
                     element.Attributes(),
                     element.Nodes().Select(n => WmlSearchAndReplaceTransform(n,
-                        search, replace, matchCase, regex, regexProvided, options, evaluator)));
+                        search, replace, matchCase)));
             }
             return node;
         }
 
         private static void WmlSearchAndReplaceInXDocument(XDocument xDocument, string search,
-            string replace, bool matchCase, bool regex = false, Regex regexProvided = null, RegexOptions? options = null, MatchEvaluator evaluator = null)
+            string replace, bool matchCase)
         {
             XElement newRoot = (XElement)WmlSearchAndReplaceTransform(xDocument.Root,
-                search, replace, matchCase, regex, regexProvided, options, evaluator);
+                search, replace, matchCase);
             xDocument.Elements().First().ReplaceWith(newRoot);
         }
 
@@ -250,39 +215,8 @@ namespace OpenXmlPowerTools
             }
         }
 
-        public static void SearchAndReplace(
-            WordprocessingDocument wordDoc,
-            string search,
-            string replace,
-            bool matchCase)
-        {
-            TextReplacer.SearchAndReplace(wordDoc, search, replace, matchCase, false, null, null, null);
-        }
-        public static void SearchAndReplace(
-            WordprocessingDocument wordDoc,
-            string search,
-            MatchEvaluator evaluator)
-        {
-            TextReplacer.SearchAndReplace(wordDoc, "", "", false, true, new Regex(search), null, evaluator);
-        }
-        public static void SearchAndReplace(
-            WordprocessingDocument wordDoc,
-            Regex match,
-            MatchEvaluator evaluator)
-        {
-            TextReplacer.SearchAndReplace(wordDoc, "", "", false, true, match, null, evaluator);
-        }
-        public static void SearchAndReplace(
-            WordprocessingDocument wordDoc,
-            string search,
-            MatchEvaluator evaluator,
-            RegexOptions options)
-        {
-            TextReplacer.SearchAndReplace(wordDoc, "", "", false, true, new Regex(search, options), options, evaluator);
-        }
-
-        private static void SearchAndReplace(WordprocessingDocument wordDoc, string search,
-            string replace, bool matchCase, bool regex, Regex regexProvided, RegexOptions? options, MatchEvaluator evaluator)
+        public static void SearchAndReplace(WordprocessingDocument wordDoc, string search,
+            string replace, bool matchCase)
         {
             if (RevisionAccepter.HasTrackedRevisions(wordDoc))
                 throw new InvalidDataException(
@@ -294,30 +228,30 @@ namespace OpenXmlPowerTools
                 throw new InvalidDataException("Revision tracking is turned on for document.");
 
             xDoc = wordDoc.MainDocumentPart.GetXDocument();
-            WmlSearchAndReplaceInXDocument(xDoc, search, replace, matchCase, regex, regexProvided, options, evaluator);
+            WmlSearchAndReplaceInXDocument(xDoc, search, replace, matchCase);
             wordDoc.MainDocumentPart.PutXDocument();
             foreach (var part in wordDoc.MainDocumentPart.HeaderParts)
             {
                 xDoc = part.GetXDocument();
-                WmlSearchAndReplaceInXDocument(xDoc, search, replace, matchCase, regex, regexProvided, options, evaluator);
+                WmlSearchAndReplaceInXDocument(xDoc, search, replace, matchCase);
                 part.PutXDocument();
             }
             foreach (var part in wordDoc.MainDocumentPart.FooterParts)
             {
                 xDoc = part.GetXDocument();
-                WmlSearchAndReplaceInXDocument(xDoc, search, replace, matchCase, regex, regexProvided, options, evaluator);
+                WmlSearchAndReplaceInXDocument(xDoc, search, replace, matchCase);
                 part.PutXDocument();
             }
             if (wordDoc.MainDocumentPart.EndnotesPart != null)
             {
                 xDoc = wordDoc.MainDocumentPart.EndnotesPart.GetXDocument();
-                WmlSearchAndReplaceInXDocument(xDoc, search, replace, matchCase, regex, regexProvided, options, evaluator);
+                WmlSearchAndReplaceInXDocument(xDoc, search, replace, matchCase);
                 wordDoc.MainDocumentPart.EndnotesPart.PutXDocument();
             }
             if (wordDoc.MainDocumentPart.FootnotesPart != null)
             {
                 xDoc = wordDoc.MainDocumentPart.FootnotesPart.GetXDocument();
-                WmlSearchAndReplaceInXDocument(xDoc, search, replace, matchCase, regex, regexProvided, options, evaluator);
+                WmlSearchAndReplaceInXDocument(xDoc, search, replace, matchCase);
                 wordDoc.MainDocumentPart.FootnotesPart.PutXDocument();
             }
         }
